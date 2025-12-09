@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { mutation, action, query } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
-import { Pinecone } from "@pinecone-database/pinecone";
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+// import { Pinecone } from "@pinecone-database/pinecone";
+import * as GoogleGenAI from "@google/generative-ai";
 import { api } from "./_generated/api";
 
 // Define types for our documents
@@ -40,15 +40,15 @@ interface RelevantChunk {
 }
 
 // Initialize Pinecone client
-const initPinecone = (apiKey: string) => {
-    return new Pinecone({
-        apiKey,
-    });
-};
+// const initPinecone = (apiKey: string) => {
+//     return new Pinecone({
+//         apiKey,
+//     });
+// };
 
 // Initialize Gemini
 const initGemini = (apiKey: string) => {
-    return new GoogleGenerativeAI(apiKey);
+    return new GoogleGenAI.GoogleGenerativeAI(apiKey);
 };
 
 // Function to generate embeddings using a simple hash function
@@ -264,29 +264,31 @@ export const queryDocuments = action({
         pineconeApiKey: v.string(),
     },
     async handler(ctx, args): Promise<{ text: string }> {
+        const MODEL_NAME = "gemini-1.5-flash";
         try {
             console.log("Starting query with:", args.query);
 
             // Initialize Gemini
+
             const genAI = initGemini(args.geminiApiKey);
-            const model = genAI.getGenerativeModel({ 
-                model: "gemini-2.0-flash",
+            const model = genAI.getGenerativeModel({
+                model: MODEL_NAME,
                 safetySettings: [
                     {
-                        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-                        threshold: HarmBlockThreshold.BLOCK_NONE
+                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
                     },
                     {
-                        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                        threshold: HarmBlockThreshold.BLOCK_NONE
+                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
                     },
                     {
-                        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                        threshold: HarmBlockThreshold.BLOCK_NONE
+                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
                     },
                     {
-                        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                        threshold: HarmBlockThreshold.BLOCK_NONE
+                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
                     }
                 ],
                 generationConfig: {
@@ -346,13 +348,13 @@ Important formatting instructions:
                     throw new Error("Invalid Gemini API key. Please check your API key in .env.local");
                 } else if (error.message.includes("quota")) {
                     throw new Error("Gemini API quota exceeded. Please try again later or use a different API key");
-                } else if (error.message.includes("model")) {
-                    throw new Error("Gemini model not found or unavailable. Please check that your API key has access to 'gemini-2.0-flash'");
+                } else if (error.message.includes("model") || error.message.includes("not found")) {
+                    throw new Error(`Gemini model '${MODEL_NAME}' not found or unavailable. Make sure your API key has access to this model. Details: ${error.message}`);
                 } else {
                     throw new Error(`Failed to get response from AI: ${error.message}`);
                 }
             }
-            throw new Error("Failed to get response from AI. Please check your API configuration and try again.");
+            throw new Error(`Failed to get response from AI. Details: ${error}`);
         }
     }
 });
