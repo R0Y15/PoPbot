@@ -97,7 +97,17 @@ function splitTextIntoChunks(text: string, chunkSize: number = 1000, overlap: nu
 export const getFile = mutation({
     args: { fileId: v.id("files") },
     async handler(ctx, args) {
-        return await ctx.db.get(args.fileId);
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Unauthenticated");
+
+        const file = await ctx.db.get(args.fileId);
+        if (!file) return null;
+
+        if (file.ownerId !== identity.subject) {
+            throw new Error("Unauthorized to access this file");
+        }
+
+        return file;
     },
 });
 
@@ -116,12 +126,15 @@ export const createDocument = mutation({
         fileId: v.id("files"),
     },
     async handler(ctx, args): Promise<Id<"documents">> {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Unauthenticated");
+
         return await ctx.db.insert("documents", {
             name: args.name,
             type: args.type,
             content: args.content,
             fileId: args.fileId,
-            ownerId: "public",
+            ownerId: identity.subject,
             createdAt: Date.now(),
         });
     },
@@ -146,7 +159,12 @@ export const storeEmbedding = mutation({
 export const getDocuments = query({
     args: {},
     async handler(ctx) {
-        return await ctx.db.query("documents").collect();
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) return [];
+
+        return await ctx.db.query("documents")
+            .filter(q => q.eq(q.field("ownerId"), identity.subject))
+            .collect();
     },
 });
 
@@ -165,8 +183,11 @@ export const processFile = action({
         pineconeApiKey: v.string(),
     },
     async handler(ctx, args): Promise<Id<"documents">> {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Unauthenticated");
+
         try {
-            console.log("Starting file processing");
+            console.log("Starting file processing relative to user:", identity.subject);
 
             // Get the file
             const file = await ctx.runMutation(api.documents.getFile, { fileId: args.fileId });
@@ -264,6 +285,9 @@ export const queryDocuments = action({
         pineconeApiKey: v.string(),
     },
     async handler(ctx, args): Promise<{ text: string }> {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Unauthenticated");
+
         const MODEL_NAME = "gemini-2.5-flash-lite";
         try {
             console.log("Starting query with:", args.query);
