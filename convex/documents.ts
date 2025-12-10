@@ -264,9 +264,10 @@ export const queryDocuments = action({
         pineconeApiKey: v.string(),
     },
     async handler(ctx, args): Promise<{ text: string }> {
-        const MODEL_NAME = "gemini-1.5-flash";
+        const MODEL_NAME = "gemini-2.5-flash";
         try {
             console.log("Starting query with:", args.query);
+            console.log("Gemini API Key prefix:", args.geminiApiKey ? args.geminiApiKey.substring(0, 5) : "MISSING");
 
             // Initialize Gemini
 
@@ -340,8 +341,9 @@ Important formatting instructions:
 
             console.log("Generated response");
             return { text };
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error in queryDocuments:", error);
+            console.error("Full error details:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
             // Provide more specific error messages based on the error type
             if (error instanceof Error) {
                 if (error.message.includes("API key")) {
