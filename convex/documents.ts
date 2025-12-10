@@ -264,41 +264,15 @@ export const queryDocuments = action({
         pineconeApiKey: v.string(),
     },
     async handler(ctx, args): Promise<{ text: string }> {
-        const MODEL_NAME = "gemini-2.5-flash";
+        const MODEL_NAME = "gemini-2.5-flash-lite";
         try {
             console.log("Starting query with:", args.query);
             console.log("Gemini API Key prefix:", args.geminiApiKey ? args.geminiApiKey.substring(0, 5) : "MISSING");
 
             // Initialize Gemini
 
-            const genAI = initGemini(args.geminiApiKey);
-            const model = genAI.getGenerativeModel({
-                model: MODEL_NAME,
-                safetySettings: [
-                    {
-                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
-                    },
-                    {
-                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
-                    },
-                    {
-                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
-                    },
-                    {
-                        category: GoogleGenAI.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                        threshold: GoogleGenAI.HarmBlockThreshold.BLOCK_NONE
-                    }
-                ],
-                generationConfig: {
-                    temperature: 0.5,
-                    topP: 0.8,
-                    topK: 32,
-                    maxOutputTokens: 1024,
-                }
-            });
+            // Using direct fetch to force API version 1 as requested
+            const url = `https://generativelanguage.googleapis.com/v1/models/${MODEL_NAME}:generateContent?key=${args.geminiApiKey}`;
 
             // Prepare prompt based on whether we have context
             let prompt = args.context ?
@@ -323,23 +297,51 @@ Important formatting instructions:
 - Use proper Markdown syntax for any lists, headings, or emphasis` :
                 args.query;
 
-            console.log("Sending prompt to Gemini");
-            const result = await model.generateContent(prompt);
-            if (!result) {
-                throw new Error("Failed to generate content");
+            console.log("Sending prompt to Gemini via v1 API");
+
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{ text: prompt }]
+                    }],
+                    generationConfig: {
+                        temperature: 0.5,
+                        topP: 0.8,
+                        topK: 32,
+                        maxOutputTokens: 1024,
+                    },
+                    safetySettings: [
+                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                    ]
+                })
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`Gemini API Error: ${response.statusText} (${response.status}) - ${errorBody}`);
             }
 
-            const response = await result.response;
-            if (!response) {
-                throw new Error("Empty response from AI");
+            const data = await response.json();
+
+            if (!data.candidates || data.candidates.length === 0) {
+                throw new Error("No candidates returned from Gemini");
             }
 
-            const text = response.text();
+            const candidate = data.candidates[0];
+            const text = candidate.content?.parts?.[0]?.text;
+
             if (!text) {
                 throw new Error("Empty text in response");
             }
 
-            console.log("Generated response");
+            console.log("Generated response successfully");
             return { text };
         } catch (error: any) {
             console.error("Error in queryDocuments:", error);
