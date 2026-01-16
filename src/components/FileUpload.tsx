@@ -65,9 +65,10 @@ async function extractText(file: File): Promise<string> {
 
 interface FileUploadProps {
   onFileContent: (content: string | null, fileName: string | null) => void;
+  onGraphStatus?: (status: 'idle' | 'building' | 'ready' | 'error', documentName?: string) => void;
 }
 
-export function FileUpload({ onFileContent }: FileUploadProps) {
+export function FileUpload({ onFileContent, onGraphStatus }: FileUploadProps) {
   const { toast } = useToast();
   const [isUploading, setIsUploading] = useState(false);
   const [deleting, setDeleting] = useState<Id<"files"> | null>(null);
@@ -125,11 +126,40 @@ export function FileUpload({ onFileContent }: FileUploadProps) {
 
         console.log('Extracted text length:', text.length);
         onFileContent(text, file.name);
-        
+
+        onGraphStatus?.('building', file.name);
         toast({
-          title: 'Success',
-          description: `File "${file.name}" uploaded successfully`,
+          title: 'Building knowledge graph...',
+          description: 'Extracting entities and relationships from the document',
         });
+
+        try {
+          const graphRes = await fetch('/api/graph/build', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, documentName: file.name }),
+          });
+
+          if (!graphRes.ok) {
+            const errData = await graphRes.json();
+            throw new Error(errData.error || 'Graph build failed');
+          }
+
+          const graphData = await graphRes.json();
+          onGraphStatus?.('ready', file.name);
+          toast({
+            title: 'Knowledge graph ready',
+            description: `Extracted ${graphData.stats.entities} entities and ${graphData.stats.relationships} relationships from ${graphData.stats.chunks} chunks`,
+          });
+        } catch (graphErr) {
+          console.error('Graph build error:', graphErr);
+          onGraphStatus?.('error', file.name);
+          toast({
+            title: 'Graph build failed',
+            description: 'Chat will use document text directly as fallback',
+            variant: 'destructive',
+          });
+        }
       } catch (error) {
         console.error('File processing error:', error);
         onFileContent(null, null);

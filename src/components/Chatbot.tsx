@@ -5,10 +5,10 @@ import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { useToast } from '../hooks/use-toast';
-import { chat } from '@/lib/gemini';
+import { chat, graphChat } from '@/lib/gemini';
 import { FileUpload } from './FileUpload';
 import { useConvex } from 'convex/react';
-import { Loader2, Paperclip, X } from 'lucide-react';
+import { Loader2, Paperclip, X, GitGraph } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import ReactMarkdown from 'react-markdown';
 
@@ -29,6 +29,8 @@ export function Chatbot({ className }: { className?: string }) {
     const [documentContent, setDocumentContent] = useState<string | null>(null);
     const [showUpload, setShowUpload] = useState(false);
     const [currentFileName, setCurrentFileName] = useState<string | null>(null);
+    const [graphStatus, setGraphStatus] = useState<'idle' | 'building' | 'ready' | 'error'>('idle');
+    const [graphDocumentName, setGraphDocumentName] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const { toast } = useToast();
     const convex = useConvex();
@@ -51,7 +53,9 @@ export function Chatbot({ className }: { className?: string }) {
 
         setIsLoading(true);
         try {
-            const response = await chat(userMessage, convex, documentContent);
+            const response = graphStatus === 'ready' && graphDocumentName
+                ? await graphChat(userMessage, graphDocumentName)
+                : await chat(userMessage, convex, documentContent);
             setMessages((prev) => [
                 ...prev,
                 { role: "assistant", content: response.text },
@@ -76,9 +80,16 @@ export function Chatbot({ className }: { className?: string }) {
         setShowUpload(false);
     }, []);
 
+    const handleGraphStatus = useCallback((status: 'idle' | 'building' | 'ready' | 'error', docName?: string) => {
+        setGraphStatus(status);
+        if (docName) setGraphDocumentName(docName);
+    }, []);
+
     const handleDeleteFile = useCallback(() => {
         setDocumentContent(null);
         setCurrentFileName(null);
+        setGraphStatus('idle');
+        setGraphDocumentName(null);
     }, []);
 
     return (
@@ -114,10 +125,24 @@ export function Chatbot({ className }: { className?: string }) {
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* File Tab */}
             {currentFileName && (
                 <div className="mx-4 mb-2 px-3 py-1.5 bg-muted dark:bg-secondary/80 rounded-md flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">{currentFileName}</span>
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">{currentFileName}</span>
+                        {graphStatus === 'building' && (
+                            <span className="flex items-center gap-1 text-xs text-amber-500">
+                                <Loader2 className="h-3 w-3 animate-spin" /> Building graph...
+                            </span>
+                        )}
+                        {graphStatus === 'ready' && (
+                            <span className="flex items-center gap-1 text-xs text-emerald-500">
+                                <GitGraph className="h-3 w-3" /> Graph ready
+                            </span>
+                        )}
+                        {graphStatus === 'error' && (
+                            <span className="text-xs text-destructive">Graph failed — using fallback</span>
+                        )}
+                    </div>
                     <Button
                         variant="ghost"
                         size="icon"
@@ -131,7 +156,7 @@ export function Chatbot({ className }: { className?: string }) {
 
             {showUpload && (
                 <div className="mx-4 mb-2">
-                    <FileUpload onFileContent={handleFileContent} />
+                    <FileUpload onFileContent={handleFileContent} onGraphStatus={handleGraphStatus} />
                 </div>
             )}
 
