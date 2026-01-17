@@ -3,7 +3,7 @@ import { queryGraph, generateAnswer } from "@/lib/graph-rag";
 
 export async function POST(req: NextRequest) {
   try {
-    const { query, documentName } = await req.json();
+    const { query, documentName, history } = await req.json();
 
     if (!query || typeof query !== "string") {
       return NextResponse.json(
@@ -12,8 +12,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    console.log("[GraphQuery] query:", query, "document:", documentName, "history:", (history || []).length, "msgs");
     const graphContext = await queryGraph(query, documentName);
-    const answer = await generateAnswer(query, graphContext);
+    console.log("[GraphQuery] context — facts:", graphContext.facts.length, "chunks:", graphContext.chunks.length);
+    const answer = await generateAnswer(query, graphContext, history);
 
     return NextResponse.json({
       text: answer,

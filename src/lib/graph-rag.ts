@@ -1,5 +1,5 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { ChatGoogleGenerativeAI, GoogleGenerativeAIChatInput } from "@langchain/google-genai";
+import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { runCypher } from "./neo4j";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -32,15 +32,15 @@ export interface GraphContext {
 // ── LLM setup ───────────────────────────────────────────────────────────────
 
 function getModel() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Missing GEMINI_API_KEY in environment");
+  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Missing NEXT_PUBLIC_GEMINI_API_KEY in environment");
 
   return new ChatGoogleGenerativeAI({
-    modelName: "gemini-2.0-flash",
-    apiKey,
+    model: "gemini-2.5-flash-lite",
+    apiKey: apiKey,
     temperature: 0.1,
     maxOutputTokens: 4096,
-  });
+  } as GoogleGenerativeAIChatInput);
 }
 
 // ── Text chunking ───────────────────────────────────────────────────────────
@@ -95,6 +95,55 @@ Rules:
 - Extract at least the most important entities even from short chunks
 - If no meaningful entities exist, return {"entities":[],"relationships":[]}`;
 
+function repairJSON(raw: string): string {
+  let s = raw.trim();
+
+  // Find the last complete JSON object in an array by locating the last "},"
+  // or "}" that closes a valid object, then truncate after it.
+  const lastCompleteObject = s.lastIndexOf("},");
+  const lastClosedObject = s.lastIndexOf("}");
+
+  if (lastCompleteObject > 0) {
+    const afterCut = s.slice(0, lastCompleteObject + 1);
+    const bracketOpen = (afterCut.match(/\[/g) || []).length;
+    const bracketClose = (afterCut.match(/]/g) || []).length;
+    const braceOpen = (afterCut.match(/{/g) || []).length;
+    const braceClose = (afterCut.match(/}/g) || []).length;
+
+    let repaired = afterCut;
+    for (let i = 0; i < bracketOpen - bracketClose; i++) repaired += "]";
+    for (let i = 0; i < braceOpen - braceClose; i++) repaired += "}";
+
+    try {
+      JSON.parse(repaired);
+      return repaired;
+    } catch { /* fall through to character-level repair */ }
+  }
+
+  // Character-level repair as fallback
+  if (s.endsWith(",")) s = s.slice(0, -1);
+  if (s.endsWith(":")) s = s.slice(0, -1);
+
+  // Fix truncated strings
+  const quotes = (s.match(/"/g) || []).length;
+  if (quotes % 2 !== 0) s += '"';
+
+  // Fix trailing key without value e.g. "key": or "key":"
+  s = s.replace(/,\s*"[^"]*"\s*:\s*"?$/g, "");
+
+  if (s.endsWith(",")) s = s.slice(0, -1);
+
+  const braceOpen = (s.match(/{/g) || []).length;
+  const braceClose = (s.match(/}/g) || []).length;
+  const bracketOpen = (s.match(/\[/g) || []).length;
+  const bracketClose = (s.match(/]/g) || []).length;
+
+  for (let i = 0; i < bracketOpen - bracketClose; i++) s += "]";
+  for (let i = 0; i < braceOpen - braceClose; i++) s += "}";
+
+  return s;
+}
+
 export async function extractEntitiesFromChunk(
   chunk: string
 ): Promise<ExtractionResult> {
@@ -103,7 +152,7 @@ export async function extractEntitiesFromChunk(
   try {
     const response = await model.invoke([
       new SystemMessage(EXTRACTION_PROMPT),
-      new HumanMessage(chunk),
+      new HumanMessage(chunk.slice(0, 3000)),
     ]);
 
     const content =
@@ -116,7 +165,13 @@ export async function extractEntitiesFromChunk(
       .replace(/```\s*/g, "")
       .trim();
 
-    const parsed: ExtractionResult = JSON.parse(cleaned);
+    let parsed: ExtractionResult;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      console.warn("[GraphRAG] Repairing truncated JSON response...");
+      parsed = JSON.parse(repairJSON(cleaned));
+    }
 
     if (!Array.isArray(parsed.entities)) parsed.entities = [];
     if (!Array.isArray(parsed.relationships)) parsed.relationships = [];
@@ -280,68 +335,128 @@ export async function queryGraph(
   documentName?: string
 ): Promise<GraphContext> {
   const entities = await extractQueryEntities(query);
+  const lowerEntities = entities.map((e) => e.toLowerCase());
+  console.log("[GraphRAG] Query entities:", entities);
 
-  if (entities.length === 0) {
-    return { facts: [], chunks: [], entityCount: 0, relationshipCount: 0 };
+  let factResults: { source: string; relation: string; target: string; description: string }[] = [];
+  let chunkResults: { text: string }[] = [];
+  let neighborResults: { source: string; relation: string; target: string }[] = [];
+
+  if (lowerEntities.length > 0) {
+    factResults = await runCypher<{
+      source: string;
+      relation: string;
+      target: string;
+      description: string;
+    }>(
+      `
+      UNWIND $entities AS entityName
+      MATCH (e:Entity)
+      WHERE toLower(e.name) CONTAINS entityName
+         OR entityName CONTAINS toLower(e.name)
+      MATCH (e)-[r:RELATES_TO]-(related:Entity)
+      WITH DISTINCT e.name AS source, r.relation AS relation, related.name AS target, r.description AS description, r.weight AS weight
+      RETURN source, relation, target, description
+      ORDER BY weight DESC
+      LIMIT 30
+      `,
+      { entities: lowerEntities }
+    );
+    console.log("[GraphRAG] Facts found:", factResults.length);
+
+    const docFilter = documentName
+      ? "AND c.documentName = $documentName"
+      : "";
+
+    chunkResults = await runCypher<{ text: string }>(
+      `
+      UNWIND $entities AS entityName
+      MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+      WHERE (toLower(e.name) CONTAINS entityName OR entityName CONTAINS toLower(e.name)) ${docFilter}
+      RETURN DISTINCT c.text AS text
+      LIMIT 8
+      `,
+      { entities: lowerEntities, documentName: documentName || "" }
+    );
+    console.log("[GraphRAG] Chunks via entities:", chunkResults.length);
+
+    neighborResults = await runCypher<{
+      source: string;
+      relation: string;
+      target: string;
+    }>(
+      `
+      UNWIND $entities AS entityName
+      MATCH (e:Entity)
+      WHERE toLower(e.name) CONTAINS entityName
+         OR entityName CONTAINS toLower(e.name)
+      MATCH (e)-[:RELATES_TO]->(mid:Entity)-[r2:RELATES_TO]->(far:Entity)
+      RETURN DISTINCT
+        mid.name AS source,
+        r2.relation AS relation,
+        far.name AS target
+      LIMIT 15
+      `,
+      { entities: lowerEntities }
+    );
   }
 
-  const lowerEntities = entities.map((e) => e.toLowerCase());
+  if (chunkResults.length === 0) {
+    const keywords = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 3);
+    const keywordPattern = keywords.join("|");
 
-  const factResults = await runCypher<{
-    source: string;
-    relation: string;
-    target: string;
-    description: string;
-  }>(
-    `
-    UNWIND $entities AS entityName
-    MATCH (e:Entity)
-    WHERE toLower(e.name) CONTAINS entityName
-    MATCH (e)-[r:RELATES_TO]-(related:Entity)
-    RETURN DISTINCT
-      e.name AS source,
-      r.relation AS relation,
-      related.name AS target,
-      r.description AS description
-    ORDER BY r.weight DESC
-    LIMIT 30
-    `,
-    { entities: lowerEntities }
-  );
+    if (keywordPattern) {
+      const docFilter = documentName
+        ? "AND c.documentName = $documentName"
+        : "";
 
-  const docFilter = documentName
-    ? "AND c.documentName = $documentName"
-    : "";
+      chunkResults = await runCypher<{ text: string }>(
+        `
+        MATCH (c:Chunk)
+        WHERE any(kw IN $keywords WHERE toLower(c.text) CONTAINS kw) ${docFilter}
+        RETURN c.text AS text
+        LIMIT 6
+        `,
+        { keywords, documentName: documentName || "" }
+      );
+      console.log("[GraphRAG] Chunks via keyword fallback:", chunkResults.length);
+    }
+  }
 
-  const chunkResults = await runCypher<{ text: string }>(
-    `
-    UNWIND $entities AS entityName
-    MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
-    WHERE toLower(e.name) CONTAINS entityName ${docFilter}
-    RETURN DISTINCT c.text AS text
-    LIMIT 8
-    `,
-    { entities: lowerEntities, documentName: documentName || "" }
-  );
+  if (factResults.length === 0 && chunkResults.length === 0 && documentName) {
+    console.log("[GraphRAG] No results from entity or keyword search, fetching all document data");
 
-  const neighborResults = await runCypher<{
-    source: string;
-    relation: string;
-    target: string;
-  }>(
-    `
-    UNWIND $entities AS entityName
-    MATCH (e:Entity)
-    WHERE toLower(e.name) CONTAINS entityName
-    MATCH path = (e)-[r1:RELATES_TO]->(mid:Entity)-[r2:RELATES_TO]->(far:Entity)
-    RETURN DISTINCT
-      mid.name AS source,
-      r2.relation AS relation,
-      far.name AS target
-    LIMIT 15
-    `,
-    { entities: lowerEntities }
-  );
+    factResults = await runCypher<{
+      source: string;
+      relation: string;
+      target: string;
+      description: string;
+    }>(
+      `
+      MATCH (d:Document {name: $documentName})-[:CONTAINS]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+      MATCH (e)-[r:RELATES_TO]-(related:Entity)
+      WITH DISTINCT e.name AS source, r.relation AS relation, related.name AS target, r.description AS description, r.weight AS weight
+      RETURN source, relation, target, description
+      ORDER BY weight DESC
+      LIMIT 30
+      `,
+      { documentName }
+    );
+
+    chunkResults = await runCypher<{ text: string }>(
+      `
+      MATCH (d:Document {name: $documentName})-[:CONTAINS]->(c:Chunk)
+      RETURN c.text AS text
+      ORDER BY c.index
+      LIMIT 8
+      `,
+      { documentName }
+    );
+    console.log("[GraphRAG] Document fallback — facts:", factResults.length, "chunks:", chunkResults.length);
+  }
 
   const facts = factResults.map(
     (f) => `${f.source} --[${f.relation}]--> ${f.target}${f.description ? ` (${f.description})` : ""}`
@@ -353,6 +468,8 @@ export async function queryGraph(
 
   const allFacts = [...new Set([...facts, ...neighborFacts])];
   const chunks = chunkResults.map((c) => c.text);
+
+  console.log("[GraphRAG] Final context — facts:", allFacts.length, "chunks:", chunks.length);
 
   return {
     facts: allFacts,
@@ -366,7 +483,8 @@ export async function queryGraph(
 
 export async function generateAnswer(
   query: string,
-  graphContext: GraphContext
+  graphContext: GraphContext,
+  history?: { role: string; content: string }[]
 ): Promise<string> {
   const model = getModel();
 
@@ -398,10 +516,23 @@ Instructions:
 - Be concise but thorough`
     : `You are a knowledgeable assistant. No specific document context was found for this question. Answer using your general knowledge. Use clear Markdown formatting.`;
 
-  const response = await model.invoke([
+  const messages: (SystemMessage | HumanMessage | AIMessage)[] = [
     new SystemMessage(systemPrompt),
-    new HumanMessage(query),
-  ]);
+  ];
+
+  if (history && history.length > 0) {
+    for (const msg of history) {
+      if (msg.role === "user") {
+        messages.push(new HumanMessage(msg.content));
+      } else {
+        messages.push(new AIMessage(msg.content));
+      }
+    }
+  }
+
+  messages.push(new HumanMessage(query));
+
+  const response = await model.invoke(messages);
 
   const content =
     typeof response.content === "string"

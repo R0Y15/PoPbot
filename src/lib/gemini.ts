@@ -6,12 +6,13 @@ import { api } from "../../convex/_generated/api";
  */
 export async function graphChat(
   message: string,
-  documentName: string
+  documentName: string,
+  history: { role: string; content: string }[] = []
 ): Promise<{ text: string }> {
   const res = await fetch("/api/graph/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: message, documentName }),
+    body: JSON.stringify({ query: message, documentName, history }),
   });
 
   if (!res.ok) {

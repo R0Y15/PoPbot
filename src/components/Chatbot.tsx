@@ -53,8 +53,13 @@ export function Chatbot({ className }: { className?: string }) {
 
         setIsLoading(true);
         try {
+            const recentHistory = messages.slice(-6).map((m) => ({
+                role: m.role,
+                content: m.role === 'assistant' ? m.content.slice(0, 500) : m.content,
+            }));
+
             const response = graphStatus === 'ready' && graphDocumentName
-                ? await graphChat(userMessage, graphDocumentName)
+                ? await graphChat(userMessage, graphDocumentName, recentHistory)
                 : await chat(userMessage, convex, documentContent);
             setMessages((prev) => [
                 ...prev,
