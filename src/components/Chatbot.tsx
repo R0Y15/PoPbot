@@ -98,7 +98,7 @@ export function Chatbot({ className }: { className?: string }) {
     }, []);
 
     return (
-        <Card className={cn("w-full max-w-2xl mx-auto h-[600px] flex flex-col rounded-t-none bg-background", className)}>
+        <Card className={cn("w-full max-w-2xl mx-4 sm:mx-auto h-[600px] flex flex-col rounded-t-none bg-background", className)}>
             <div className="p-4 border-b bg-background">
                 <h2 className="font-semibold text-foreground">AI Chat Assistant</h2>
             </div>
