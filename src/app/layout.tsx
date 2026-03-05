@@ -10,8 +10,8 @@ import { UserButton } from "@clerk/nextjs";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Embeddable AI Chatbot",
-  description: "A powerful, customizable AI chatbot that can be embedded in any website",
+  title: "PopBot",
+  description: "A powerful, Graph-based RAG Knowledge Base AI chatbot",
 };
 
 export default function RootLayout({
