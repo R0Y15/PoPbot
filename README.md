@@ -1,6 +1,6 @@
-# Embeddable AI Chatbot
+# POPBOT
 
-A modern, embeddable AI chatbot powered by Google's Gemini model, built with Next.js, shadcn/ui, and Convex.
+A modern, AI chatbot powered by Google's Gemini model with GraphRAG knowledge retrieval, built with Next.js, Neo4j, Clerk, Convex, and shadcn/ui.
 
 <div align="center">
   <img src="public/home-page.png" alt="AI Chatbot Demo" width="100%"/>
@@ -9,10 +9,23 @@ A modern, embeddable AI chatbot powered by Google's Gemini model, built with Nex
 ## Features
 
 - 🤖 Powered by Google's Gemini AI model
+- 🧠 GraphRAG-powered knowledge retrieval using Neo4j
+- 🔐 User authentication with Clerk
+- 💾 Real-time data sync with Convex
 - 🎨 Beautiful UI with shadcn/ui components
 - 📱 Responsive design
 - 🔌 Easy to embed in any website
 - ⚡ Real-time chat interactions
+
+## Tech Stack
+
+- **Framework**: Next.js 15
+- **AI**: Google Gemini, LangChain
+- **Knowledge Graph**: Neo4j (GraphRAG)
+- **Auth**: Clerk
+- **Database**: Convex
+- **UI**: shadcn/ui, Tailwind CSS
+- **Language**: TypeScript
 
 ## Getting Started
 
@@ -64,11 +77,31 @@ export default function YourPage() {
 }
 ```
 
+## Document Limits
+
+The app processes **one document at a time**. For best results:
+
+| Document Size | Recommendation |
+|---------------|----------------|
+| **10-20 pages** | Optimal accuracy |
+| **30-50 pages** | Acceptable |
+| **50+ pages** | Split into sections |
+
+### Technical constraints
+
+- **Graph build timeout**: 60 seconds max processing time
+- **Chunk size**: ~1500 characters per chunk
+- **Context retrieval**: 8 chunks + 30 facts per query
+- **Supported formats**: PDF, TXT, Markdown
+
+For larger documents, split them into focused sections and upload one at a time.
+
 ## Development
 
 - `src/components/Chatbot.tsx` - Main chatbot component
 - `src/components/ChatWidget.tsx` - Floating chat widget
 - `src/lib/gemini.ts` - Gemini AI configuration
+- `src/lib/graph-rag.ts` - GraphRAG knowledge extraction
 - `src/app/widget/page.tsx` - Embeddable widget page
 
 ## License

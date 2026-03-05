@@ -9,10 +9,10 @@ export function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999]">
+    <>
       {isOpen ? (
-        <div className="mb-4 rounded-lg shadow-lg">
-          <div className="bg-primary px-4 py-2 rounded-t-lg flex justify-between items-center">
+        <div className="fixed inset-0 sm:inset-auto sm:bottom-4 sm:right-4 z-[9999] flex flex-col sm:block">
+          <div className="bg-primary px-4 py-2 sm:rounded-t-lg flex justify-between items-center">
             <span className="text-primary-foreground font-medium">Chat Support</span>
             <Button
               variant="ghost"
@@ -23,17 +23,19 @@ export function ChatWidget() {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <Chatbot />
+          <Chatbot className="flex-1 sm:flex-none h-auto sm:h-[600px] rounded-none sm:rounded-b-lg" />
         </div>
       ) : (
-        <Button
-          size="lg"
-          className="rounded-full h-12 w-12 shadow-lg"
-          onClick={() => setIsOpen(true)}
-        >
-          <MessageCircle className="h-6 w-6" />
-        </Button>
+        <div className="fixed bottom-4 right-4 z-[9999]">
+          <Button
+            size="lg"
+            className="rounded-full h-12 w-12 shadow-lg"
+            onClick={() => setIsOpen(true)}
+          >
+            <MessageCircle className="h-6 w-6" />
+          </Button>
+        </div>
       )}
-    </div>
+    </>
   );
 }
